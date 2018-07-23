@@ -1,22 +1,25 @@
 package com.example;
 
-import com.rabbitmq.client.Channel;
-import org.axonframework.amqp.eventhandling.DefaultAMQPMessageConverter;
-import org.axonframework.amqp.eventhandling.spring.SpringAMQPMessageSource;
-import org.axonframework.config.ProcessingGroup;
-import org.axonframework.eventhandling.EventHandler;
+import com.mongodb.MongoClient;
+import org.axonframework.config.EventProcessingConfiguration;
+import org.axonframework.eventhandling.tokenstore.TokenStore;
+import org.axonframework.eventsourcing.eventstore.EmbeddedEventStore;
+import org.axonframework.eventsourcing.eventstore.EventStorageEngine;
+import org.axonframework.eventsourcing.eventstore.EventStore;
+import org.axonframework.mongo.DefaultMongoTemplate;
+import org.axonframework.mongo.MongoTemplate;
+import org.axonframework.mongo.eventsourcing.eventstore.MongoEventStorageEngine;
+import org.axonframework.mongo.eventsourcing.eventstore.documentperevent.DocumentPerEventStorageStrategy;
+import org.axonframework.mongo.eventsourcing.tokenstore.MongoTokenStore;
 import org.axonframework.serialization.Serializer;
-import org.springframework.amqp.core.Message;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.axonframework.serialization.json.JacksonSerializer;
+import org.axonframework.serialization.xml.XStreamSerializer;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.embedded.LocalServerPort;
 import org.springframework.context.annotation.Bean;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicLong;
 
 @SpringBootApplication
 public class DemoComplaintsStatsApplication {
@@ -25,32 +28,60 @@ public class DemoComplaintsStatsApplication {
 		SpringApplication.run(DemoComplaintsStatsApplication.class, args);
 	}
 
-	@ProcessingGroup("statistics")
-	@RestController
-	public static class StatisticsAPI {
+	@Value("${server.port}")
+	private int serverPort;
 
-		private final ConcurrentMap<String, AtomicLong> statistics = new ConcurrentHashMap<>();
 
-		@EventHandler
-		public void on(ComplaintFiledEvent event) {
-			statistics.computeIfAbsent(event.getCompany(), k -> new AtomicLong()).incrementAndGet();
-		}
 
-		@GetMapping
-		public ConcurrentMap<String, AtomicLong> showStatistics() {
-			return statistics;
-		}
-	}
-
-	@Bean
+	/*@Bean
 	public SpringAMQPMessageSource statisticsQueue(Serializer serializer) {
-		return new SpringAMQPMessageSource(new DefaultAMQPMessageConverter(serializer)) {
+		return new SpringAMQPMessageSource(serializer) {
 
 			@RabbitListener(queues = "Complaints")
 			@Override
-			public void onMessage(Message message, Channel channel) throws Exception {
+			public void onMessage(Message message, Channel channel) {
 				super.onMessage(message, channel);
 			}
 		};
+	}*/
+
+	@Autowired
+	private MongoClient mongoClient;
+
+	/*@Bean
+	public Serializer messageSerializer() {
+		return new JacksonSerializer();
+	}
+
+	@Bean
+	public Serializer eventSerializer() {
+		return new JacksonSerializer();
+	}*/
+
+
+	@Bean
+	public EventStore eventStore(EventStorageEngine eventStorageEngine) {
+		return new EmbeddedEventStore(eventStorageEngine);
+	}
+
+	@Bean
+	public TokenStore tokenStore() {
+		return new MongoTokenStore(axonMongoTemplate(), new XStreamSerializer());
+	}
+
+	@Autowired
+	public void configure(EventProcessingConfiguration config) {
+		config.usingTrackingProcessors();
+		config.assignProcessingGroup("statistics", "statistics" + serverPort);
+	}
+
+	@Bean
+	public MongoTemplate axonMongoTemplate() {
+		return new DefaultMongoTemplate(mongoClient);
+	}
+
+	@Bean
+	public EventStorageEngine eventStorageEngine(Serializer serializer) {
+		return new MongoEventStorageEngine(serializer, null, axonMongoTemplate(), new DocumentPerEventStorageStrategy());
 	}
 }

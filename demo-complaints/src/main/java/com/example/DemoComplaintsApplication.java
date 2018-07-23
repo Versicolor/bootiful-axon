@@ -1,125 +1,141 @@
 package com.example;
 
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import com.fasterxml.jackson.annotation.PropertyAccessor;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mongodb.MongoClient;
+import org.axonframework.amqp.eventhandling.spring.SpringAMQPPublisher;
 import org.axonframework.commandhandling.CommandHandler;
 import org.axonframework.commandhandling.gateway.CommandGateway;
 import org.axonframework.commandhandling.model.AggregateIdentifier;
+import org.axonframework.commandhandling.model.Repository;
+import org.axonframework.common.transaction.TransactionManager;
+import org.axonframework.config.EventHandlingConfiguration;
+import org.axonframework.config.EventProcessingConfiguration;
+import org.axonframework.config.SagaConfiguration;
 import org.axonframework.eventhandling.EventHandler;
-import org.axonframework.eventsourcing.EventSourcingHandler;
+import org.axonframework.eventhandling.saga.repository.SagaStore;
+import org.axonframework.eventhandling.tokenstore.TokenStore;
+import org.axonframework.eventsourcing.*;
+import org.axonframework.eventsourcing.eventstore.EmbeddedEventStore;
+import org.axonframework.eventsourcing.eventstore.EventStorageEngine;
+import org.axonframework.eventsourcing.eventstore.EventStore;
+import org.axonframework.messaging.annotation.ParameterResolverFactory;
+import org.axonframework.mongo.DefaultMongoTemplate;
+import org.axonframework.mongo.MongoTemplate;
+import org.axonframework.mongo.eventhandling.saga.repository.MongoSagaStore;
+import org.axonframework.mongo.eventsourcing.eventstore.MongoEventStorageEngine;
+import org.axonframework.mongo.eventsourcing.eventstore.StorageStrategy;
+import org.axonframework.mongo.eventsourcing.eventstore.documentperevent.DocumentPerEventStorageStrategy;
+import org.axonframework.mongo.eventsourcing.tokenstore.MongoTokenStore;
+import org.axonframework.serialization.Serializer;
+import org.axonframework.serialization.json.JacksonSerializer;
+import org.axonframework.serialization.xml.XStreamSerializer;
+import org.axonframework.spring.eventsourcing.SpringAggregateSnapshotter;
+import org.axonframework.spring.eventsourcing.SpringAggregateSnapshotterFactoryBean;
 import org.axonframework.spring.stereotype.Aggregate;
 import org.springframework.amqp.core.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.data.mongodb.repository.config.EnableMongoRepositories;
 import org.springframework.stereotype.Component;
 import org.springframework.util.Assert;
 import org.springframework.web.bind.annotation.*;
 
+import java.lang.management.ManagementFactory;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 import static org.axonframework.commandhandling.model.AggregateLifecycle.apply;
 
 @SpringBootApplication
+@EnableMongoRepositories
 public class DemoComplaintsApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(DemoComplaintsApplication.class, args);
     }
 
-    @RequestMapping("/complaints")
-    @RestController
-    public static class ComplaintAPI {
+    @Autowired
+    private MongoClient mongoClient;
 
-        private final CommandGateway commandGateway;
-        private final ComplaintQueryObjectRepository complaintsQueryObjectRepository;
-
-        public ComplaintAPI(CommandGateway commandGateway, ComplaintQueryObjectRepository complaintsQueryObjectRepository) {
-            this.commandGateway = commandGateway;
-            this.complaintsQueryObjectRepository = complaintsQueryObjectRepository;
-        }
-
-        @PostMapping
-        public CompletableFuture<String> fileComplaint(@RequestBody Map<String, String> request) {
-            String id = UUID.randomUUID().toString();
-            return commandGateway.send(new FileComplaintCommand(id, request.get("company"), request.get("description")));
-        }
-
-        @GetMapping
-        public List<ComplaintQueryObject> findAll() {
-            return complaintsQueryObjectRepository.findAll();
-        }
-
-        @GetMapping("/{id}")
-        public ComplaintQueryObject find(@PathVariable String id) {
-            return complaintsQueryObjectRepository.findOne(id);
-        }
+   /*@Bean
+    public Serializer messageSerializer() {
+       return new JacksonSerializer();
     }
 
-    @Component
-    public static class ComplaintQueryObjectUpdater {
+    @Bean
+    public Serializer eventSerializer() {
+        return new JacksonSerializer();
+    }*/
 
-        private final ComplaintQueryObjectRepository complaintsQueryObjectRepository;
 
-        public ComplaintQueryObjectUpdater(ComplaintQueryObjectRepository complaintsQueryObjectRepository) {
-            this.complaintsQueryObjectRepository = complaintsQueryObjectRepository;
-        }
-
-        @EventHandler
-        public void on(ComplaintFiledEvent event) {
-            complaintsQueryObjectRepository.save(new ComplaintQueryObject(event.getId(), event.getCompany(), event.getDescription()));
-        }
+    @Bean
+    public EventStore eventStore(EventStorageEngine eventStorageEngine) {
+        return new EmbeddedEventStore(eventStorageEngine);
     }
 
-    @Aggregate
-    public static class Complaint {
-
-        @AggregateIdentifier
-        private String complaintId;
-
-        public Complaint() {
-        }
-
-        @CommandHandler
-        public Complaint(FileComplaintCommand command) {
-            Assert.hasLength(command.getCompany());
-            apply(new ComplaintFiledEvent(command.getId(), command.getCompany(), command.getDescription()));
-        }
-
-        @EventSourcingHandler
-        protected void on(ComplaintFiledEvent event) {
-            this.complaintId = event.getId();
-        }
-
+    @Bean
+    public TokenStore tokenStore(MongoTemplate mongoTemplate) {
+       return new MongoTokenStore(mongoTemplate, new XStreamSerializer());
     }
 
-    public static class FileComplaintCommand {
+    /*@Autowired
+    public void configure(EventProcessingConfiguration config) {
+        config.usingTrackingProcessors();
+    }*/
 
-        private final String id;
-        private final String company;
-        private final String description;
-
-        public FileComplaintCommand(String id, String company, String description) {
-            this.id = id;
-            this.company = company;
-            this.description = description;
-        }
-
-        public String getId() {
-            return id;
-        }
-
-        public String getCompany() {
-            return company;
-        }
-
-        public String getDescription() {
-            return description;
-        }
+    @Bean
+    public MongoTemplate axonMongoTemplate() {
+        return new DefaultMongoTemplate(mongoClient);
     }
 
+    @Bean
+    public EventStorageEngine eventStorageEngine(MongoTemplate mongoTemplate, Serializer serializer) {
+        return new MongoEventStorageEngine(serializer, null, mongoTemplate, new DocumentPerEventStorageStrategy());
+    }
+
+    @Bean
+    public Repository<ComplaintAggregate> complaintAggregateRepository(EventStore eventStore, SnapshotTriggerDefinition snapshotTriggerDefinition) {
+        return new EventSourcingRepository<>(ComplaintAggregate.class, eventStore, snapshotTriggerDefinition);
+    }
+
+    @Bean
+    public SpringAggregateSnapshotterFactoryBean snapshotter() {
+        return new SpringAggregateSnapshotterFactoryBean();
+    }
+
+    @Bean
+    public SnapshotTriggerDefinition snapshotTriggerDefinition(Snapshotter snapshotter) {
+        return new EventCountSnapshotTriggerDefinition(snapshotter, 5);
+    }
+
+    @Bean
+    public SagaStore sagaStore(MongoTemplate mongoTemplate) {
+        return new MongoSagaStore(mongoTemplate, new XStreamSerializer());
+    }
+
+   /* @Bean
+    public SagaConfiguration sagaConfiguration() {
+        return SagaConfiguration.trackingSagaManager(SagaTest.class);
+    }*/
+
+    // Message
+
+    /*@Bean
+    public SpringAMQPPublisher springAMQPPublisher() {
+        SpringAMQPPublisher springAMQPPublisher = new SpringAMQPPublisher(eventStore());
+        springAMQPPublisher.setExchange(exchange());
+        springAMQPPublisher.setSerializer(messageSerializer());
+        return springAMQPPublisher;
+    }
 
     @Bean
     public Exchange exchange() {
@@ -141,5 +157,5 @@ public class DemoComplaintsApplication {
         admin.declareExchange(exchange());
         admin.declareQueue(queue());
         admin.declareBinding(binding());
-    }
+    }*/
 }
