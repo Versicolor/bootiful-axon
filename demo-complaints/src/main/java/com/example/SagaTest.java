@@ -9,8 +9,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 
-// TODO: if the application shtdown in middle of saga, everything is stuck
-@Saga
 public class SagaTest {
 
     private final static Logger LOG = LoggerFactory.getLogger(SagaTest.class);
@@ -20,7 +18,7 @@ public class SagaTest {
     @Autowired
     private transient CommandGateway commandGateway;
 
-    @StartSaga
+    @StartSaga(forceNew = true)
     @SagaEventHandler(associationProperty = "id")
     public void handle(ComplaintCreatedEvent event) {
         LOG.info("Saga start {}", event);

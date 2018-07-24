@@ -14,6 +14,7 @@ import org.axonframework.config.EventHandlingConfiguration;
 import org.axonframework.config.EventProcessingConfiguration;
 import org.axonframework.config.SagaConfiguration;
 import org.axonframework.eventhandling.EventHandler;
+import org.axonframework.eventhandling.TrackingEventProcessorConfiguration;
 import org.axonframework.eventhandling.saga.repository.SagaStore;
 import org.axonframework.eventhandling.tokenstore.TokenStore;
 import org.axonframework.eventsourcing.*;
@@ -122,10 +123,11 @@ public class DemoComplaintsApplication {
         return new MongoSagaStore(mongoTemplate, new XStreamSerializer());
     }
 
-   /* @Bean
+    @Bean
     public SagaConfiguration sagaConfiguration() {
-        return SagaConfiguration.trackingSagaManager(SagaTest.class);
-    }*/
+        return SagaConfiguration.trackingSagaManager(SagaTest.class)
+                .configureTrackingProcessor(configuration -> TrackingEventProcessorConfiguration.forParallelProcessing(2));
+    }
 
     // Message
 
